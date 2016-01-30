@@ -19,48 +19,69 @@ batch_size = 100
 display_step = 1
 
 # tf Graph Input
-x = tf.placeholder("float", [None, 784]) # mnist data image of shape 28*28=784
-y = tf.placeholder("float", [None, 10]) # 0-9 digits recognition => 10 classes
+x = tf.placeholder("float", [None, 784], name='x') # mnist data image of shape 28*28=784
+y = tf.placeholder("float", [None, 10], name='y') # 0-9 digits recognition => 10 classes
 
 # Create model
 
 # Set model weights
-W = tf.Variable(tf.zeros([784, 10]))
-b = tf.Variable(tf.zeros([10]))
+W = tf.Variable(tf.zeros([784, 10]),name='W')
+b = tf.Variable(tf.zeros([10]),name='b')
 
 # Construct model
-activation = tf.nn.softmax(tf.matmul(x, W) + b) # Softmax
+with tf.name_scope('Wx_b') as scope:
+    activation = tf.nn.softmax(tf.matmul(x, W) + b) # Softmax
+
+# export some variables
+_ = tf.histogram_summary('weights', W)
+_ = tf.histogram_summary('biases', b)
+_ = tf.histogram_summary('activation', activation)
 
 # Minimize error using cross entropy
-cost = tf.reduce_mean(-tf.reduce_sum(y*tf.log(activation), reduction_indices=1)) # Cross entropy
-optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(cost) # Gradient Descent
+with tf.name_scope('cost') as scope:
+    cost = tf.reduce_mean(-tf.reduce_sum(y*tf.log(activation), reduction_indices=1)) # Cross entropy
+    _ = tf.scalar_summary('cost', cost)
+
+avg_cost = tf.Variable( 0.,name='avg_cost')
+with tf.name_scope('train') as scope:
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(cost) # Gradient Descent
+    tf_total_batch = tf.placeholder("float", None, name='total_batch')
+    avg_add = avg_cost.assign_add(tf.div(cost,tf_total_batch))
+    avg_reset = avg_cost.assign(0.)
+    _ = tf.scalar_summary('avg_cost', avg_cost)
 
 # Initializing the variables
+merged = tf.merge_all_summaries()
 init = tf.initialize_all_variables()
 
 # Launch the graph
 with tf.Session() as sess:
+    writer = tf.train.SummaryWriter('/tmp/tf_logs', sess.graph_def)
     sess.run(init)
 
     # Training cycle
     for epoch in range(training_epochs):
-        avg_cost = 0.
+        sess.run(avg_reset)
         total_batch = int(mnist.train.num_examples/batch_size)
         # Loop over all batches
         for i in range(total_batch):
             batch_xs, batch_ys = mnist.train.next_batch(batch_size)
             # Fit training using batch data
             sess.run(optimizer, feed_dict={x: batch_xs, y: batch_ys})
-            # Compute average loss
-            avg_cost += sess.run(cost, feed_dict={x: batch_xs, y: batch_ys})/total_batch
+            current_cost, avg = sess.run([cost, avg_add], feed_dict={x: batch_xs, y: batch_ys, tf_total_batch: total_batch})
+            #avg = sess.run(avg_add, feed_dict={x: batch_xs, y: batch_ys})
         # Display logs per epoch step
         if epoch % display_step == 0:
-            print "Epoch:", '%04d' % (epoch+1), "cost=", "{:.9f}".format(avg_cost)
+            # Compute average loss
+            result = sess.run(merged, feed_dict={x: batch_xs, y: batch_ys})
+            print "Epoch:", '%04d' % (epoch+1), "cost=", avg
+            writer.add_summary(result, epoch)
 
     print "Optimization Finished!"
 
     # Test model
-    correct_prediction = tf.equal(tf.argmax(activation, 1), tf.argmax(y, 1))
-    # Calculate accuracy
-    accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))
+    with tf.name_scope('test') as scope:
+        correct_prediction = tf.equal(tf.argmax(activation, 1), tf.argmax(y, 1))
+        # Calculate accuracy
+        accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))
     print "Accuracy:", accuracy.eval({x: mnist.test.images, y: mnist.test.labels})
